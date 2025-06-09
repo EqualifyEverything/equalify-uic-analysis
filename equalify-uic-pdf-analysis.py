@@ -9,7 +9,7 @@ logging.basicConfig(level=logging.INFO, format='%(message)s')
 
 # Initialize output CSV with headers
 output_headers = [
-    'Site Name', 'Site ID', 'Link Type', 'Location Type', 'Title', 'Link', 'URL',
+    'Link Type', 'Location Type', 'Title', 'Link', 'URL',
     'PDF Size (bytes)', 'Page Count', 'Text-based', 'Has Title',
     'Language Set', 'Tagged', 'Notes'
 ]
@@ -23,7 +23,7 @@ logging.info("Starting PDF accessibility analysis...")
 for i, url in enumerate(df['Link']):
     logging.info(f"\nProcessing: {url}")
     link_type = str(df.iloc[i]['Link Type']).strip().lower()
-    if link_type == 'Box':
+    if link_type == 'box':
         row = df.iloc[i].to_dict()
         row.update({
             'PDF Size (bytes)': None,
@@ -138,6 +138,8 @@ for i, url in enumerate(df['Link']):
         'Tagged': is_tagged,
         'Notes': "; ".join(notes)
     })
-    pd.DataFrame([row]).to_csv('output.csv', mode='a', header=False, index=False)
+    # Filter row to only include output_headers keys in correct order
+    filtered_row = {key: row.get(key, None) for key in output_headers}
+    pd.DataFrame([filtered_row]).to_csv('output.csv', mode='a', header=False, index=False)
 
 logging.info("\nAnalysis complete. Results saved to 'output.csv'.")
