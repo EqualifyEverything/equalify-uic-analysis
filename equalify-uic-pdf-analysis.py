@@ -5,6 +5,8 @@ import requests
 from PyPDF2 import PdfReader
 from io import BytesIO
 import logging
+import gc
+from tqdm import tqdm
 logging.basicConfig(level=logging.INFO, format='%(message)s')
 
 # Initialize output CSV with headers
@@ -20,7 +22,10 @@ df = pd.read_csv('input.csv')
 
 logging.info("Starting PDF accessibility analysis...")
 
-for i, url in enumerate(df['Link']):
+results_batch = []
+BATCH_SIZE = 100
+
+for i, url in enumerate(tqdm(df['Link'], desc="Processing PDFs", unit="file")):
     logging.info(f"\nProcessing: {url}")
     link_type = str(df.iloc[i]['Link Type']).strip().lower()
     if link_type == 'box':
@@ -34,7 +39,12 @@ for i, url in enumerate(df['Link']):
             'Tagged': None,
             'Notes': 'Skipped: Box link'
         })
-        pd.DataFrame([row]).to_csv('output.csv', mode='a', header=False, index=False)
+        filtered_row = {key: row.get(key, None) for key in output_headers}
+        results_batch.append(filtered_row)
+        if len(results_batch) >= BATCH_SIZE:
+            pd.DataFrame(results_batch).to_csv('output.csv', mode='a', header=False, index=False)
+            results_batch = []
+        gc.collect()
         logging.info("→ Skipped: Box link")
         continue
     if not url.lower().endswith('.pdf'):
@@ -48,11 +58,16 @@ for i, url in enumerate(df['Link']):
             'Tagged': None,
             'Notes': 'Skipped: Not a PDF link'
         })
-        pd.DataFrame([row]).to_csv('output.csv', mode='a', header=False, index=False)
+        filtered_row = {key: row.get(key, None) for key in output_headers}
+        results_batch.append(filtered_row)
+        if len(results_batch) >= BATCH_SIZE:
+            pd.DataFrame(results_batch).to_csv('output.csv', mode='a', header=False, index=False)
+            results_batch = []
+        gc.collect()
         continue
 
     try:
-        response = requests.get(url)
+        response = requests.get(url, timeout=15)
         response.raise_for_status()
         if 'application/pdf' not in response.headers.get('Content-Type', ''):
             raise ValueError("Not a PDF based on Content-Type")
@@ -68,7 +83,12 @@ for i, url in enumerate(df['Link']):
             'Tagged': None,
             'Notes': f"Download failed: {e}"
         })
-        pd.DataFrame([row]).to_csv('output.csv', mode='a', header=False, index=False)
+        filtered_row = {key: row.get(key, None) for key in output_headers}
+        results_batch.append(filtered_row)
+        if len(results_batch) >= BATCH_SIZE:
+            pd.DataFrame(results_batch).to_csv('output.csv', mode='a', header=False, index=False)
+            results_batch = []
+        gc.collect()
         continue
 
     # Default values
@@ -140,6 +160,13 @@ for i, url in enumerate(df['Link']):
     })
     # Filter row to only include output_headers keys in correct order
     filtered_row = {key: row.get(key, None) for key in output_headers}
-    pd.DataFrame([filtered_row]).to_csv('output.csv', mode='a', header=False, index=False)
+    results_batch.append(filtered_row)
+    if len(results_batch) >= BATCH_SIZE:
+        pd.DataFrame(results_batch).to_csv('output.csv', mode='a', header=False, index=False)
+        results_batch = []
+    gc.collect()
+
+if results_batch:
+    pd.DataFrame(results_batch).to_csv('output.csv', mode='a', header=False, index=False)
 
 logging.info("\nAnalysis complete. Results saved to 'output.csv'.")
