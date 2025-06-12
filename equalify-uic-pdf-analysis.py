@@ -1,19 +1,29 @@
-import pikepdf
-from pdfminer.high_level import extract_text
+
+# === Standard library imports ===
+import os
+import sys
+import gc
+import logging
+import contextlib
+from io import BytesIO
+
+# === Third-party imports ===
 import pandas as pd
 import requests
-from PyPDF2 import PdfReader
-from io import BytesIO
-import logging
-import gc
 from tqdm import tqdm
+from PyPDF2 import PdfReader
+from pdfminer.high_level import extract_text
+
 logging.basicConfig(level=logging.INFO, format='%(message)s')
+# Silence pdfminer logging to CRITICAL
+for noisy_logger in ["pdfminer", "pdfminer.layout", "pdfminer.pdfinterp"]:
+    logging.getLogger(noisy_logger).setLevel(logging.CRITICAL)
 
 # Initialize output CSV with headers
 output_headers = [
     'Link Type', 'Location Type', 'Title', 'Link', 'URL',
-    'PDF Size (bytes)', 'Page Count', 'Text-based', 'Has Title',
-    'Language Set', 'Tagged', 'Notes'
+    'PDF Size (bytes)', 'Page Count', 'Text-based',
+    'Tagged', 'Notes'
 ]
 pd.DataFrame(columns=output_headers).to_csv('output.csv', index=False)
 
@@ -34,8 +44,6 @@ for i, url in enumerate(tqdm(df['Link'], desc="Processing PDFs", unit="file")):
             'PDF Size (bytes)': None,
             'Page Count': None,
             'Text-based': None,
-            'Has Title': None,
-            'Language Set': None,
             'Tagged': None,
             'Notes': 'Skipped: Box link'
         })
@@ -53,8 +61,6 @@ for i, url in enumerate(tqdm(df['Link'], desc="Processing PDFs", unit="file")):
             'PDF Size (bytes)': None,
             'Page Count': None,
             'Text-based': None,
-            'Has Title': None,
-            'Language Set': None,
             'Tagged': None,
             'Notes': 'Skipped: Not a PDF link'
         })
@@ -78,8 +84,6 @@ for i, url in enumerate(tqdm(df['Link'], desc="Processing PDFs", unit="file")):
             'PDF Size (bytes)': None,
             'Page Count': None,
             'Text-based': None,
-            'Has Title': None,
-            'Language Set': None,
             'Tagged': None,
             'Notes': f"Download failed: {e}"
         })
@@ -95,8 +99,6 @@ for i, url in enumerate(tqdm(df['Link'], desc="Processing PDFs", unit="file")):
     size = None
     pages = None
     is_text_based = None
-    has_title = None
-    lang = None
     is_tagged = None
     notes = []
 
@@ -124,37 +126,46 @@ for i, url in enumerate(tqdm(df['Link'], desc="Processing PDFs", unit="file")):
         logging.warning(f"→ Failed to extract text: {e}")
         notes.append("Failed to extract text")
 
-    # Metadata
+    # Tag detection using pdfminer3 only
     try:
-        with pikepdf.open(BytesIO(response.content)) as pdf:
-            docinfo = pdf.docinfo
-            has_title = bool(docinfo.get('/Title'))
+        from pdfminer3.pdfinterp import PDFResourceManager, PDFPageInterpreter
+        from pdfminer3.pdfdevice import TagExtractor
+        from pdfminer3.pdfpage import PDFPage
 
-            root = getattr(pdf, "root", None)
-            if root and '/Lang' in root:
-                lang = root.get('/Lang', 'Not Set')
-            else:
-                lang = 'Unknown'
-                notes.append("Missing /Lang in outline root")
+        rsrcmgr = PDFResourceManager()
+        retstr = BytesIO()
+        try:
+            device = TagExtractor(rsrcmgr, retstr, codec='utf-8')
+        except:
+            device = TagExtractor(rsrcmgr, retstr, codec='ascii')
+        interpreter = PDFPageInterpreter(rsrcmgr, device)
+        maxpages = 1
+        pagenos = set()
+        import contextlib
+        import os
+        import sys
+        for page in PDFPage.get_pages(BytesIO(response.content), pagenos, maxpages=maxpages, caching=True, check_extractable=True):
+            with contextlib.redirect_stdout(open(os.devnull, 'w')), contextlib.redirect_stderr(open(os.devnull, 'w')):
+                interpreter.process_page(page)
+        contents = retstr.getvalue().decode()
 
-            mark_info = root.get('/MarkInfo') if root else None
-            is_tagged = mark_info.get('/Marked') if mark_info and '/Marked' in mark_info else False
-            if not mark_info:
-                notes.append("Missing /MarkInfo in outline root")
+        # Acrobat tag indicators
+        tag_indicators = ["<b'Part'", "</b'Sect'", "</b'Art'", "<b'Content'", "<b'Artifact'"]
+        if any(tag in contents for tag in tag_indicators):
+            is_tagged = True
+            notes.append("Tags detected via pdfminer3")
+        else:
+            is_tagged = False
+            notes.append("No tags detected via pdfminer3")
     except Exception as e:
-        logging.warning(f"→ Failed to extract metadata: {e}")
-        notes.append("Failed to extract metadata")
-        has_title = None
-        lang = 'Unknown'
         is_tagged = None
+        notes.append(f"pdfminer3 tag check failed: {e}")
 
     row = df.iloc[i].to_dict()
     row.update({
         'PDF Size (bytes)': size,
         'Page Count': pages,
         'Text-based': is_text_based,
-        'Has Title': has_title,
-        'Language Set': lang,
         'Tagged': is_tagged,
         'Notes': "; ".join(notes)
     })
