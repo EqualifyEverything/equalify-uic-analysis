@@ -1,0 +1,5 @@
+pandas
+requests
+tqdm
+PyPDF2
+pdfminer.six
