@@ -3,3 +3,4 @@ requests
 tqdm
 PyPDF2
 pdfminer.six
+boxsdk
