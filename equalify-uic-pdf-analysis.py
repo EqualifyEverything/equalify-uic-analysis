@@ -1,5 +1,7 @@
 # === Standard library imports ===
 import os
+from dotenv import load_dotenv
+load_dotenv()
 import gc
 import logging
 from io import BytesIO
@@ -19,9 +21,9 @@ for noisy_logger in ["pdfminer", "pdfminer.layout", "pdfminer.pdfinterp"]:
     logging.getLogger(noisy_logger).setLevel(logging.CRITICAL)
 
 oauth = OAuth2(
-    client_id='97mcp2od8tlluiu7skbo6coxzkir178z',
-    client_secret='YOUR_CLIENT_SECRET',
-    access_token='9R5TneoJhBnDIuYcoJ7CXlkpJoiNx47P'
+    client_id=os.getenv('BOX_CLIENT_ID'),
+    client_secret=os.getenv('BOX_CLIENT_SECRET'),
+    access_token=os.getenv('BOX_ACCESS_TOKEN')
 )
 box_client = Client(oauth)
 
