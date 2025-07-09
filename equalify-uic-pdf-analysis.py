@@ -57,10 +57,13 @@ for i, url in enumerate(tqdm(df['Link'], desc="Processing PDFs", unit="file")):
     tagged_raw = row.get('Tagged', '')
     equalify_scan_raw = row.get('Equalify Scan Results', '')
 
-    pdf_size_val = str(pdf_size_raw).strip().upper()
-    page_count_val = str(page_count_raw).strip().upper()
-    text_based_val = str(text_based_raw).strip().upper()
-    tagged_val = "TRUE" if str(tagged_raw).strip().upper() == "TRUE" else "FALSE"
+    pdf_size_val = str(pdf_size_raw).strip().upper() if pd.notna(pdf_size_raw) else ""
+    page_count_val = str(page_count_raw).strip().upper() if pd.notna(page_count_raw) else ""
+    text_based_val = str(text_based_raw).strip().upper() if pd.notna(text_based_raw) else ""
+    if pd.isna(tagged_raw):
+        tagged_val = ""
+    else:
+        tagged_val = "TRUE" if str(tagged_raw).strip().upper() == "TRUE" else "FALSE"
     equalify_scan_val = str(equalify_scan_raw).strip().upper() if pd.notna(equalify_scan_raw) else ""
 
     needs_size = pdf_size_val in ["", "FAILED"]
@@ -155,7 +158,7 @@ for i, url in enumerate(tqdm(df['Link'], desc="Processing PDFs", unit="file")):
             gc.collect()
             continue
     else:
-        if not url.lower().endswith('.pdf'):
+        if link_type != 'box' and not url.lower().endswith('.pdf'):
             row.update({
                 'PDF Size (bytes)': None,
                 'Page Count': None,
