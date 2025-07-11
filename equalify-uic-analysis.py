@@ -1,7 +1,30 @@
+# === Open Source Software ===
+# This program is maintained by the University of Illinois Chicago Accessibility
+# Engineering Team (https://uic.edu/accessibility/engineering).
+# Copyright (C) 2025  University of Illinois Chicago.
+
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+
+# You should have received a copy of the GNU General Public License
+# along with this program. 
+
 # === Standard library imports ===
 import os
 from dotenv import load_dotenv
 load_dotenv()
+BOX_ENABLED = all([
+    os.getenv('BOX_CLIENT_ID'),
+    os.getenv('BOX_CLIENT_SECRET'),
+    os.getenv('BOX_ACCESS_TOKEN')
+])
 import gc
 import logging
 from io import BytesIO
@@ -20,12 +43,13 @@ logging.basicConfig(level=logging.INFO, format='%(message)s')
 for noisy_logger in ["pdfminer", "pdfminer.layout", "pdfminer.pdfinterp"]:
     logging.getLogger(noisy_logger).setLevel(logging.CRITICAL)
 
-oauth = OAuth2(
-    client_id=os.getenv('BOX_CLIENT_ID'),
-    client_secret=os.getenv('BOX_CLIENT_SECRET'),
-    access_token=os.getenv('BOX_ACCESS_TOKEN')
-)
-box_client = Client(oauth)
+if BOX_ENABLED:
+    oauth = OAuth2(
+        client_id=os.getenv('BOX_CLIENT_ID'),
+        client_secret=os.getenv('BOX_CLIENT_SECRET'),
+        access_token=os.getenv('BOX_ACCESS_TOKEN')
+    )
+    box_client = Client(oauth)
 
 # Initialize output CSV with headers
 output_headers = [
@@ -129,6 +153,21 @@ for i, url in enumerate(tqdm(df['Link'], desc="Processing PDFs", unit="file")):
 
     # === Retrieve PDF content ===
     if link_type == 'box':
+        if not BOX_ENABLED:
+            row.update({
+                'PDF Size (bytes)': None,
+                'Page Count': None,
+                'Text-based': None,
+                'Tagged': None,
+                'Notes': 'Skipped: BOX credentials not provided'
+            })
+            filtered_row = {key: row.get(key, None) for key in output_headers}
+            results_batch.append(filtered_row)
+            if len(results_batch) >= BATCH_SIZE:
+                pd.DataFrame(results_batch).to_csv('output.csv', mode='a', header=False, index=False)
+                results_batch = []
+            gc.collect()
+            continue
 
         try:
             shared_link_url = url
