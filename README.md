@@ -1,8 +1,4 @@
-# Equalify UIC PDF Analysis
-
-This project includes two key tools for analyzing PDF and HTML pages with the Equalify accessibility scan.
-
-## Equalify UIC Analysis
+# Equalify UIC Acessibility PDF + HTML Analysis
 This script (`equalify-uic-analysis.py`) performs automated checks on PDF and HTML files. It:
 - Analyzes each PDF's size, page count, text content, and tag structure.
 - Supports PDFs hosted on direct links.
@@ -11,8 +7,6 @@ This script (`equalify-uic-analysis.py`) performs automated checks on PDF and HT
 - Outputs results to `output.csv`.
 
 ## Getting Started
-
-### Setup Python Environment
 
 It's recommended to use a Python virtual environment:
 
