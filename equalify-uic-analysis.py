@@ -35,11 +35,6 @@ JOB_URL_BASE = "https://scan-dev.equalify.app/"
 
 os.makedirs(RESULTS_DIR, exist_ok=True)
 
-def read_input_csv():
-    with open(INPUT_CSV, newline='', encoding='utf-8') as csvfile:
-        reader = list(csv.DictReader(csvfile))
-    logging.info(f"Read {len(reader)} rows from {INPUT_CSV}")
-    return reader
 
 def write_output_csv(rows, fieldnames):
     with open(OUTPUT_CSV, mode='w', newline='', encoding='utf-8') as csvfile:
@@ -90,71 +85,49 @@ def poll_job_result(job_id):
 def main():
     from collections import defaultdict
 
-    def chunked(iterable, size):
-        for i in range(0, len(iterable), size):
-            yield iterable[i:i + size]
-
-    input_rows = read_input_csv()
     processed_urls = set()
     file_exists = os.path.exists(OUTPUT_CSV)
     if file_exists:
         with open(OUTPUT_CSV, newline='', encoding='utf-8') as csvfile:
             reader = csv.DictReader(csvfile)
             for row in reader:
-                if row.get("Equalify Scan Results") or row.get("Notes"):
-                    processed_urls.add(row["URL"])
+                url_type = row["Link Type"].strip().lower()
+                scanned_url = row["Link"].strip() if url_type == "pdf" else row["URL"].strip()
+                if row.get("Equalify Scan Results"):
+                    processed_urls.add(scanned_url)
+                elif row.get("Notes"):
+                    processed_urls.add(scanned_url)
         logging.info(f"Skipping {len(processed_urls)} previously processed URLs")
 
+    # Streaming read and chunking
+    pdf_batch = []
+    html_batch = []
     url_to_row = {}
-    pdf_urls = []
-    html_urls = []
 
-    with open(OUTPUT_CSV, mode='a', newline='', encoding='utf-8') as csvfile:
-        fieldnames = list(input_rows[0].keys()) + ["Equalify Scan Results", "Notes"]
-        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-        if not file_exists or os.stat(OUTPUT_CSV).st_size == 0:
-            writer.writeheader()
+    with open(INPUT_CSV, newline='', encoding='utf-8') as infile:
+        reader = csv.DictReader(infile)
+        fieldnames = reader.fieldnames + ["Equalify Scan Results", "Notes"]
+        with open(OUTPUT_CSV, mode='a', newline='', encoding='utf-8') as outfile:
+            writer = csv.DictWriter(outfile, fieldnames=fieldnames)
+            if not file_exists or os.stat(OUTPUT_CSV).st_size == 0:
+                writer.writeheader()
 
-        for idx, row in enumerate(input_rows):
-            url_type = row["Link Type"].strip().lower()
-            # Use correct URL based on type
-            url = row["Link"].strip() if url_type == "pdf" else row["URL"].strip()
-            row["Equalify Scan Results"] = ""
-            row["Notes"] = ""
-            logging.info(f"Processing row {idx+1}/{len(input_rows)}: {url}")
-
-            if url in processed_urls:
-                logging.info(f"Skipping already processed URL: {url}")
-                continue
-
-            if not url:
-                row["Notes"] = "Missing URL"
-
-            elif url_type == "box":
-                row["Notes"] = "Box links aren't accessible."
-
-            else:
-                if url_type == "pdf":
-                    pdf_urls.append(url)
-                else:
-                    html_urls.append(url)
-            url_to_row[url] = row
-
-        for url_list, mode in [(pdf_urls, "verapdf"), (html_urls, None)]:
-            for chunk in chunked(url_list, 100):
-                jobs = send_scan_request(chunk, mode=mode)
+            def process_batch(urls, mode):
+                if not urls:
+                    return
+                jobs = send_scan_request(urls, mode=mode)
                 if isinstance(jobs, dict) and "error" in jobs:
-                    for url in chunk:
+                    for url in urls:
                         row = url_to_row[url]
                         row["Notes"] = f"Error during scan request: {jobs['error']}"
                         writer.writerow(row)
-                    continue
+                    return
                 if not jobs:
-                    for url in chunk:
+                    for url in urls:
                         row = url_to_row[url]
                         row["Notes"] = "No job returned from scan"
                         writer.writerow(row)
-                    continue
+                    return
                 for job in jobs:
                     url = job.get("url")
                     job_id = job.get("jobId")
@@ -178,7 +151,47 @@ def main():
                     else:
                         logging.error(f"Failed to get results for job {job_id}")
                         row["Notes"] = "Scan timed out or failed"
-                    writer.writerow(row) 
+                    writer.writerow(row)
+
+            for idx, row in enumerate(reader):
+                url_type = row["Link Type"].strip().lower()
+                url = row["Link"].strip() if url_type == "pdf" else row["URL"].strip()
+                row["Equalify Scan Results"] = ""
+                row["Notes"] = ""
+                logging.info(f"Processing row {idx+1}: {url}")
+                # Improved URL match traceability
+                if url in processed_urls:
+                    logging.info(f"Skipping already processed URL (matched): {url}")
+                    continue
+                else:
+                    if any(url.strip() == p.strip() for p in processed_urls):
+                        logging.warning(f"URL {url} differs only by whitespace from processed.")
+                if not url:
+                    row["Notes"] = "Missing URL"
+                    writer.writerow(row)
+                    continue
+                elif url_type == "box":
+                    row["Notes"] = "Box links aren't accessible."
+                    writer.writerow(row)
+                    continue
+                else:
+                    url_to_row[url] = row
+                    if url_type == "pdf":
+                        pdf_batch.append(url)
+                        if len(pdf_batch) >= 100:
+                            process_batch(pdf_batch, mode="verapdf")
+                            pdf_batch.clear()
+                    else:
+                        html_batch.append(url)
+                        if len(html_batch) >= 100:
+                            process_batch(html_batch, mode=None)
+                            html_batch.clear()
+
+            # Process any remaining batches after loop
+            if pdf_batch:
+                process_batch(pdf_batch, mode="verapdf")
+            if html_batch:
+                process_batch(html_batch, mode=None)
 
 if __name__ == "__main__":
     main()
