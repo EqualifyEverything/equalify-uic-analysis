@@ -50,7 +50,7 @@ def write_output_csv(rows, fieldnames):
 
 def send_scan_request(urls, mode=None):
     logging.info(f"Sending scan request for {len(urls)} URLs with mode={mode}")
-    body = {"urls": [{"url": url} for url in urls]}
+    body = {"urls": [{"url": url, "flags": "scanAsPdf"} if mode == "verapdf" else {"url": url} for url in urls]}
     if mode:
         body["mode"] = mode
     try:
@@ -76,6 +76,9 @@ def poll_job_result(job_id):
                 if status == "completed":
                     logging.info(f"Job {job_id} status is completed at attempt {attempt+1}")
                     return result
+                if status == "failed":
+                    logging.info(f"Job {job_id} status is failed")
+                    return result
                 else:
                     logging.info(f"Job {job_id} status is {status}")
         except Exception as e:
@@ -86,85 +89,96 @@ def poll_job_result(job_id):
 
 def main():
     from collections import defaultdict
-    # Clean output files
-    if os.path.exists(OUTPUT_CSV):
-        os.remove(OUTPUT_CSV)
-    for filename in os.listdir(RESULTS_DIR):
-        file_path = os.path.join(RESULTS_DIR, filename)
-        if os.path.isfile(file_path):
-            os.remove(file_path)
 
     def chunked(iterable, size):
         for i in range(0, len(iterable), size):
             yield iterable[i:i + size]
 
     input_rows = read_input_csv()
+    processed_urls = set()
+    file_exists = os.path.exists(OUTPUT_CSV)
+    if file_exists:
+        with open(OUTPUT_CSV, newline='', encoding='utf-8') as csvfile:
+            reader = csv.DictReader(csvfile)
+            for row in reader:
+                if row.get("Equalify Scan Results") or row.get("Notes"):
+                    processed_urls.add(row["URL"])
+        logging.info(f"Skipping {len(processed_urls)} previously processed URLs")
+
     url_to_row = {}
     pdf_urls = []
     html_urls = []
-    output_rows = []
 
-    for idx, row in enumerate(input_rows):
-        url_type = row["Link Type"].strip().lower()
-        url = row["URL"].strip()
-        row["Equalify Scan Results"] = ""
-        row["Notes"] = ""
-        logging.info(f"Processing row {idx+1}/{len(input_rows)}: {url}")
+    with open(OUTPUT_CSV, mode='a', newline='', encoding='utf-8') as csvfile:
+        fieldnames = list(input_rows[0].keys()) + ["Equalify Scan Results", "Notes"]
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        if not file_exists or os.stat(OUTPUT_CSV).st_size == 0:
+            writer.writeheader()
 
-        if not url:
-            row["Notes"] = "Missing URL"
-            output_rows.append(row)
-            continue
+        for idx, row in enumerate(input_rows):
+            url_type = row["Link Type"].strip().lower()
+            # Use correct URL based on type
+            url = row["Link"].strip() if url_type == "pdf" else row["URL"].strip()
+            row["Equalify Scan Results"] = ""
+            row["Notes"] = ""
+            logging.info(f"Processing row {idx+1}/{len(input_rows)}: {url}")
 
-        if url_type == "box":
-            row["Notes"] = "Box links aren't accessible."
-            output_rows.append(row)
-            continue
-
-        if url_type == "pdf":
-            pdf_urls.append(url)
-            url_to_row[url] = row
-        else:
-            html_urls.append(url)
-            url_to_row[url] = row
-
-    for url_list, mode in [(pdf_urls, "verapdf"), (html_urls, None)]:
-        for chunk in chunked(url_list, 100):
-            jobs = send_scan_request(chunk, mode=mode)
-            if isinstance(jobs, dict) and "error" in jobs:
-                for url in chunk:
-                    row = url_to_row[url]
-                    row["Notes"] = f"Error during scan request: {jobs['error']}"
-                    output_rows.append(row)
+            if url in processed_urls:
+                logging.info(f"Skipping already processed URL: {url}")
                 continue
-            if not jobs:
-                for url in chunk:
-                    row = url_to_row[url]
-                    row["Notes"] = "No job returned from scan"
-                    output_rows.append(row)
-                continue
-            for job in jobs:
-                url = job.get("url")
-                job_id = job.get("jobId")
-                row = url_to_row[url]
-                if not job_id:
-                    row["Notes"] = "No jobId found"
-                    output_rows.append(row)
-                    continue
-                result = poll_job_result(job_id)
-                if result:
-                    filename = f"{job_id}.json"
-                    filepath = os.path.join(RESULTS_DIR, filename)
-                    with open(filepath, 'w', encoding='utf-8') as f:
-                        json.dump(result, f, indent=2)
-                    logging.info(f"Saved scan result to {filepath}")
-                    row["Equalify Scan Results"] = filename
+
+            if not url:
+                row["Notes"] = "Missing URL"
+
+            elif url_type == "box":
+                row["Notes"] = "Box links aren't accessible."
+
+            else:
+                if url_type == "pdf":
+                    pdf_urls.append(url)
                 else:
-                    logging.error(f"Failed to get results for job {job_id}")
-                    row["Notes"] = "Scan timed out or failed"
-                output_rows.append(row)
+                    html_urls.append(url)
+            url_to_row[url] = row
 
-    write_output_csv(output_rows, input_rows[0].keys())
+        for url_list, mode in [(pdf_urls, "verapdf"), (html_urls, None)]:
+            for chunk in chunked(url_list, 100):
+                jobs = send_scan_request(chunk, mode=mode)
+                if isinstance(jobs, dict) and "error" in jobs:
+                    for url in chunk:
+                        row = url_to_row[url]
+                        row["Notes"] = f"Error during scan request: {jobs['error']}"
+                        writer.writerow(row)
+                    continue
+                if not jobs:
+                    for url in chunk:
+                        row = url_to_row[url]
+                        row["Notes"] = "No job returned from scan"
+                        writer.writerow(row)
+                    continue
+                for job in jobs:
+                    url = job.get("url")
+                    job_id = job.get("jobId")
+                    row = url_to_row[url]
+                    if not job_id:
+                        row["Notes"] = "No jobId found"
+                        writer.writerow(row)
+                        continue
+                    result = poll_job_result(job_id)
+                    if result:
+                        if result.get("status") == "completed":
+                            filename = f"{job_id}.json"
+                            filepath = os.path.join(RESULTS_DIR, filename)
+                            with open(filepath, 'w', encoding='utf-8') as f:
+                                json.dump(result, f, indent=2)
+                            logging.info(f"Saved scan result to {filepath}")
+                            row["Equalify Scan Results"] = filename
+                        else:
+                            logging.info(f"Scan job {job_id} returned status: {result.get('status')}")
+                            row["Notes"] = f"Scan {result.get('status')}"
+                    else:
+                        logging.error(f"Failed to get results for job {job_id}")
+                        row["Notes"] = "Scan timed out or failed"
+                    writer.writerow(row) 
 
 if __name__ == "__main__":
     main()
