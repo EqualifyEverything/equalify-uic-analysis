@@ -45,6 +45,7 @@ def write_output_csv(rows, fieldnames):
 
 def send_scan_request(urls, mode=None):
     logging.info(f"Sending scan request for {len(urls)} URLs with mode={mode}")
+    time.sleep(0.25)  # avoid hammering the API with concurrent batch requests
     body = {"urls": [{"url": url, "flags": "scanAsPdf"} if mode == "verapdf" else {"url": url} for url in urls]}
     if mode:
         body["mode"] = mode
@@ -62,6 +63,8 @@ def poll_job_result(job_id):
     logging.info(f"Requesting scan result from {result_url}")
     logging.info(f"Polling job result for job_id={job_id}")
     for attempt in range(6):
+        if attempt > 0:
+            time.sleep(10)
         try:
             response = requests.get(result_url)
             if response.ok:
@@ -79,7 +82,6 @@ def poll_job_result(job_id):
         except Exception as e:
             logging.warning(f"Attempt {attempt+1} failed for job {job_id}: {e}")
         logging.info(f"Checked job {job_id}, attempt {attempt+1}")
-        time.sleep(10)
     return None
 
 def main():
