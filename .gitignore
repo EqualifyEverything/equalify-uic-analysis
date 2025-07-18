@@ -4,3 +4,5 @@
 /results
 output.csv
 input.csv
+skipped_urls.log
+input-all.csv
