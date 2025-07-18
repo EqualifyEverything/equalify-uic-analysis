@@ -27,6 +27,12 @@ import logging
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+skipped_logger = logging.getLogger("skipped")
+skipped_handler = logging.FileHandler("skipped_urls.log")
+skipped_handler.setFormatter(logging.Formatter('%(asctime)s - %(message)s'))
+skipped_logger.addHandler(skipped_handler)
+skipped_logger.setLevel(logging.INFO)
+
 INPUT_CSV = "input.csv"
 OUTPUT_CSV = "output.csv"
 RESULTS_DIR = "results"
@@ -131,6 +137,8 @@ def main():
                         writer.writerow(row)
                     return
                 for job in jobs:
+                    if not job:
+                        continue
                     url = job.get("url")
                     job_id = job.get("jobId")
                     row = url_to_row[url]
@@ -167,7 +175,7 @@ def main():
                     continue
                 else:
                     if any(url.strip() == p.strip() for p in processed_urls):
-                        logging.warning(f"URL {url} differs only by whitespace from processed.")
+                        skipped_logger.info(f"URL {url} differs only by whitespace from processed.")
                 if not url:
                     row["Notes"] = "Missing URL"
                     writer.writerow(row)
